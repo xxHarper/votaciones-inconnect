@@ -31,15 +31,24 @@ const app = createApp(db, {
   voterMaxSeconds: 60,
 });
 const server = app.listen(3187, "127.0.0.1");
-function close() {
-  draftServer.close(() => draftDb.close());
-  draftServer.closeIdleConnections();
-  server.close(() => {
-    db.close();
-    rmSync(dir, { recursive: true, force: true });
-    process.exit(0);
-  });
-  server.closeIdleConnections();
+let closing = false;
+async function close() {
+  if (closing) return;
+  closing = true;
+  await Promise.all(
+    [server, draftServer, newServer].map(
+      (s) =>
+        new Promise((resolve) => {
+          s.close(resolve);
+          s.closeIdleConnections();
+        }),
+    ),
+  );
+  db.close();
+  draftDb.close();
+  newDb.close();
+  rmSync(dir, { recursive: true, force: true });
+  process.exit(0);
 }
 process.on("SIGTERM", close);
 process.on("SIGINT", close);
@@ -51,5 +60,15 @@ draftDb
   .run(passwordHash("Solo-Pruebas-E2E-Seguras"));
 const draftServer = createApp(draftDb, { pepper, testLimits: true }).listen(
   3188,
+  "127.0.0.1",
+);
+
+const newDb = connect(join(dir, "new-features.sqlite"));
+migrate(newDb);
+newDb
+  .prepare("INSERT INTO admin VALUES(1,?)")
+  .run(passwordHash("Solo-Pruebas-E2E-Seguras"));
+const newServer = createApp(newDb, { pepper, testLimits: true }).listen(
+  3190,
   "127.0.0.1",
 );

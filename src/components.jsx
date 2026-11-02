@@ -1,5 +1,7 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
+  Images,
+  ChevronLeft,
   Flower2,
   ArrowRight,
   LockKeyhole,
@@ -85,13 +87,15 @@ export function ErrorBox({ message }) {
     </div>
   ) : null;
 }
-export function Modal({ title, children, onClose }) {
-  const ref = useRef();
+export function Modal({ title, children, onClose, wide = false }) {
+  const ref = useRef(),
+    closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
     const prev = document.activeElement;
     ref.current?.focus();
     const key = (e) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") closeRef.current();
       if (e.key === "Tab") {
         const nodes = ref.current.querySelectorAll(
           'button,input,select,[tabindex="0"]',
@@ -121,7 +125,7 @@ export function Modal({ title, children, onClose }) {
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="modal"
+        className={`modal ${wide ? "modal-wide" : ""}`}
       >
         <button className="icon close" onClick={onClose} aria-label="Cerrar">
           <X />
@@ -133,56 +137,152 @@ export function Modal({ title, children, onClose }) {
   );
 }
 export function Offering({ o, own, selected, onSelect, preview = false }) {
+  const [gallery, setGallery] = useState(false);
+  useEffect(() => setGallery(false), [o.galleryVersion]);
   return (
-    <article
-      className={`offering ${own ? "own" : ""} ${selected ? "selected" : ""}`}
-    >
-      <div className="offering-image">
-        <img
-          src={
-            o.hasPhoto
-              ? `/api/offerings/${o.id}/photo?v=${o.version || 0}`
-              : `/art/mesa-${o.id}.svg`
-          }
-          alt={
-            o.hasPhoto
-              ? `Ofrenda de la mesa ${o.id}`
-              : `Ilustración de referencia de la mesa ${o.id}`
-          }
-          loading="lazy"
-        />
-        <span className="mesa-tag">
-          MESA {o.id.toString().padStart(2, "0")}
-        </span>
-        {own && (
-          <span className="own-tag">
-            <LockKeyhole size={13} />
-            Tu mesa
+    <>
+      <article
+        className={`offering ${own ? "own" : ""} ${selected ? "selected" : ""}`}
+      >
+        <div className="offering-image">
+          <img
+            src={
+              o.hasPhoto
+                ? o.primaryPhoto?.thumbnailUrl ||
+                  `/api/offerings/${o.id}/photo?v=${o.version || 0}`
+                : `/art/mesa-${o.id}.svg`
+            }
+            alt={
+              o.hasPhoto
+                ? `Ofrenda de la mesa ${o.id}`
+                : `Ilustración de referencia de la mesa ${o.id}`
+            }
+            loading="lazy"
+          />
+          <span className="mesa-tag">
+            MESA {o.id.toString().padStart(2, "0")}
           </span>
-        )}
-      </div>
-      <div className="offering-content">
-        <h3>{o.name}</h3>
-        {!o.hasPhoto && <small>Ilustración · foto por confirmar</small>}
-        {!preview && (
+          {own && (
+            <span className="own-tag">
+              <LockKeyhole size={13} />
+              Tu mesa
+            </span>
+          )}
+        </div>
+        <div className="offering-content">
+          <h3>{o.name}</h3>
+          {!o.hasPhoto && <small>Ilustración · foto por confirmar</small>}
           <button
-            className={own ? "muted-button" : "select-button"}
-            disabled={own}
-            onClick={() => onSelect(o)}
+            className="view-photos"
+            type="button"
+            disabled={!o.photos?.length}
+            onClick={() => setGallery(true)}
           >
-            {own ? (
-              <>
-                <LockKeyhole size={14} />
-                No puedes votar por tu mesa
-              </>
-            ) : (
-              <>
-                Elegir esta ofrenda <ArrowRight size={16} />
-              </>
-            )}
+            <Images size={16} />
+            Ver fotos{o.photos?.length ? ` (${o.photos.length})` : ""}
           </button>
-        )}
+          {!preview && (
+            <button
+              className={own ? "muted-button" : "select-button"}
+              disabled={own}
+              onClick={() => onSelect(o)}
+            >
+              {own ? (
+                <>
+                  <LockKeyhole size={14} />
+                  No puedes votar por tu mesa
+                </>
+              ) : (
+                <>
+                  Elegir esta ofrenda <ArrowRight size={16} />
+                </>
+              )}
+            </button>
+          )}
+        </div>
+      </article>
+      {gallery && o.photos?.length > 0 && (
+        <GalleryViewer offering={o} onClose={() => setGallery(false)} />
+      )}
+    </>
+  );
+}
+export function GalleryViewer({ offering, onClose }) {
+  const photos = offering.photos;
+  const [index, setIndex] = useState(
+    Math.max(
+      0,
+      photos.findIndex((p) => p.isPrimary),
+    ),
+  );
+  const previous = () =>
+      setIndex((i) => (i - 1 + photos.length) % photos.length),
+    next = () => setIndex((i) => (i + 1) % photos.length);
+  useEffect(() => {
+    const key = (e) => {
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        previous();
+      }
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        next();
+      }
+    };
+    document.addEventListener("keydown", key);
+    return () => document.removeEventListener("keydown", key);
+  }, [photos.length]);
+  return (
+    <Modal
+      title={`Mesa ${offering.id} · ${offering.name}`}
+      onClose={onClose}
+      wide
+    >
+      <div className="gallery-stage">
+        <img
+          src={photos[Math.min(index, photos.length - 1)].url}
+          alt={`Mesa ${offering.id}, fotografía ${index + 1} de ${photos.length}`}
+        />
       </div>
-    </article>
+      <div className="gallery-controls">
+        <button
+          className="secondary"
+          onClick={previous}
+          disabled={photos.length < 2}
+          aria-label="Foto anterior"
+        >
+          <ChevronLeft size={18} />
+          Anterior
+        </button>
+        <span aria-live="polite">
+          Foto {index + 1} de {photos.length}
+        </span>
+        <button
+          className="secondary"
+          onClick={next}
+          disabled={photos.length < 2}
+          aria-label="Foto siguiente"
+        >
+          Siguiente
+          <ChevronRight size={18} />
+        </button>
+      </div>
+      <div className="gallery-thumbnails">
+        {photos.map((p, i) => (
+          <button
+            key={p.id}
+            className={i === index ? "active" : ""}
+            onClick={() => setIndex(i)}
+            aria-label={`Ver foto ${i + 1}`}
+            aria-pressed={i === index}
+          >
+            <img src={p.thumbnailUrl} alt="" />
+          </button>
+        ))}
+      </div>
+      <button className="secondary full" onClick={onClose}>
+        Cerrar y regresar
+      </button>
+    </Modal>
   );
 }

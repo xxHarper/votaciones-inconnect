@@ -2,7 +2,19 @@ import express from "express";
 import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
 import multer from "multer";
-import { parse } from "csv-parse/sync";
+import {
+  validateParticipant,
+  idKey,
+  parseParticipantsCSV,
+  planImport,
+  insertParticipant,
+} from "./participants.js";
+import {
+  offeringList,
+  photoList,
+  optimizePhoto,
+  saveGallery,
+} from "./photos.js";
 import { resolve } from "node:path";
 import { castVote } from "./voting.js";
 import { atomic, audit, state, participation } from "./db.js";
@@ -152,12 +164,6 @@ export function createApp(db, config) {
       403,
       "Contraseña administrativa incorrecta.",
     );
-  const offeringList = () =>
-    db
-      .prepare(
-        "SELECT id,name,photo IS NOT NULL AS hasPhoto FROM offerings ORDER BY id",
-      )
-      .all();
   const results = () => {
     assert(
       state(db) === "closed",
@@ -183,19 +189,29 @@ export function createApp(db, config) {
   app.get("/api/public", (_q, res) =>
     res.json({
       status: state(db),
-      offerings: offeringList(),
+      offerings: offeringList(db),
       idleSeconds: idle / 1000,
     }),
   );
-  app.get("/api/offerings/:id/photo", (req, res) => {
-    const r = db
-      .prepare("SELECT photo,mime FROM offerings WHERE id=?")
-      .get(req.params.id);
-    if (!r?.photo) return res.sendStatus(404);
+  app.get("/api/offerings/:id/photos/:photoId", (req, res) => {
+    const p = db
+      .prepare(
+        "SELECT data,thumbnail,mime FROM offering_photos WHERE id=? AND offering_id=?",
+      )
+      .get(req.params.photoId, req.params.id);
+    if (!p) return res.sendStatus(404);
     res
-      .type(r.mime)
-      .set("Cache-Control", "no-store")
-      .send(Buffer.from(r.photo));
+      .type(p.mime)
+      .send(Buffer.from(req.query.size === "thumb" ? p.thumbnail : p.data));
+  });
+  app.get("/api/offerings/:id/photo", (req, res) => {
+    const p = db
+      .prepare(
+        "SELECT data,mime FROM offering_photos WHERE offering_id=? AND is_primary=1",
+      )
+      .get(req.params.id);
+    if (!p) return res.sendStatus(404);
+    res.type(p.mime).send(Buffer.from(p.data));
   });
   app.post("/api/voter/login", codeLimit, (req, res) => {
     exact(req.body, ["code"]);
@@ -209,7 +225,7 @@ export function createApp(db, config) {
     const result = atomic(db, () => {
       const p = db
         .prepare(
-          "SELECT id,name,table_id,voted FROM participants WHERE code_hash=?",
+          "SELECT id,name,table_id,type,voted FROM participants WHERE code_hash=?",
         )
         .get(codeHash(req.body.code, config.pepper));
       assert(p && !p.voted, 401, "Código inválido o no disponible.");
@@ -225,7 +241,7 @@ export function createApp(db, config) {
       );
       return {
         token: t,
-        participant: { name: p.name, tableId: p.table_id },
+        participant: { name: p.name, tableId: p.table_id, type: p.type },
         idleSeconds: idle / 1000,
       };
     });
@@ -283,72 +299,27 @@ export function createApp(db, config) {
     res.json({
       status: state(db),
       participation: participation(db),
-      offerings: offeringList(),
+      offerings: offeringList(db),
       participants: db
         .prepare(
-          "SELECT id,name,email,table_id AS tableId,voted,issued,code_hash IS NOT NULL AS enabled FROM participants ORDER BY table_id,name",
+          "SELECT id,name,email,table_id AS tableId,type,voted,issued,code_hash IS NOT NULL AS enabled FROM participants ORDER BY table_id,name",
         )
         .all(),
     }),
   );
-  function validateParticipant(r) {
-    exact(r, ["id", "name", "email", "tableId"]);
-    assert(
-      typeof r.id === "string" && /^[\p{L}\p{N}_-]{1,64}$/u.test(r.id),
-      400,
-      "Identificador inválido (1–64 letras, números, guion o guion bajo).",
-    );
-    assert(
-      typeof r.name === "string" &&
-        r.name.trim().length >= 2 &&
-        r.name.length <= 120 &&
-        !/[\x00-\x1f]/.test(r.name),
-      400,
-      "Nombre inválido (2–120 caracteres).",
-    );
-    const email = r.email === undefined ? "" : r.email;
-    assert(
-      typeof email === "string" &&
-        email.length <= 254 &&
-        (!email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)),
-      400,
-      "Correo inválido.",
-    );
-    assert(
-      Number.isInteger(r.tableId) && r.tableId >= 1 && r.tableId <= 6,
-      400,
-      "Mesa inválida: debe estar entre 1 y 6.",
-    );
-    return { ...r, name: r.name.trim(), email };
-  }
   function addParticipants(rows) {
-    assert(
-      rows.length > 0 && rows.length <= 10000,
-      400,
-      "Importa entre 1 y 10000 participantes.",
-    );
-    const valid = rows.map(validateParticipant);
-    const ids = new Set(
-      db
-        .prepare("SELECT id FROM participants")
-        .all()
-        .map((p) => p.id.toLowerCase()),
-    );
-    for (const r of valid) {
-      assert(
-        !ids.has(r.id.toLowerCase()) &&
-          !db
-            .prepare("SELECT id FROM participants WHERE lower(id)=lower(?)")
-            .get(r.id),
-        409,
-        `Identificador duplicado: ${r.id}`,
+    const valid = rows.map(validateParticipant),
+      ids = new Set(
+        db
+          .prepare("SELECT id FROM participants")
+          .all()
+          .map((p) => idKey(p.id)),
       );
-      ids.add(r.id.toLowerCase());
+    for (const p of valid) {
+      assert(!ids.has(idKey(p.id)), 409, `Identificador duplicado: ${p.id}`);
+      ids.add(idKey(p.id));
     }
-    for (const r of valid)
-      db.prepare(
-        "INSERT INTO participants(id,name,email,table_id) VALUES(?,?,?,?)",
-      ).run(r.id, r.name, r.email, r.tableId);
+    valid.forEach((p) => insertParticipant(db, p));
     return valid.length;
   }
   app.post("/api/admin/participants", (req, res) => {
@@ -361,7 +332,7 @@ export function createApp(db, config) {
     res.status(201).json({ count });
   });
   app.put("/api/admin/participants/:id", (req, res) => {
-    exact(req.body, ["name", "email", "tableId"]);
+    exact(req.body, ["name", "email", "tableId", "type"]);
     atomic(db, () => {
       draft();
       const existing = db
@@ -369,69 +340,58 @@ export function createApp(db, config) {
         .get(req.params.id);
       assert(existing, 404, "Participante no encontrado.");
       const p = validateParticipant({ id: existing.id, ...req.body });
-      const changed = existing.table_id !== p.tableId;
+      const changed =
+        existing.table_id !== p.tableId || existing.type !== p.type;
       db.prepare(
-        "UPDATE participants SET name=?,email=?,table_id=?,code_hash=CASE WHEN ? THEN NULL ELSE code_hash END,issued=CASE WHEN ? THEN 0 ELSE issued END WHERE id=?",
-      ).run(p.name, p.email, p.tableId, changed ? 1 : 0, changed ? 1 : 0, p.id);
+        "UPDATE participants SET name=?,email=?,table_id=?,type=?,code_hash=CASE WHEN ? THEN NULL ELSE code_hash END,issued=CASE WHEN ? THEN 0 ELSE issued END WHERE id=?",
+      ).run(
+        p.name,
+        p.email,
+        p.tableId,
+        p.type,
+        changed ? 1 : 0,
+        changed ? 1 : 0,
+        p.id,
+      );
       db.prepare("DELETE FROM voter_sessions WHERE participant_id=?").run(p.id);
       audit(db, "participant_updated", p.id);
     });
     res.json({ ok: true });
   });
-  app.post("/api/admin/participants/import", (req, res) => {
+  app.post("/api/admin/participants/import/preview", (req, res) => {
     exact(req.body, ["csv"]);
-    assert(typeof req.body.csv === "string", 400, "CSV requerido.");
-    let records;
-    try {
-      records = parse(req.body.csv, {
-        columns: (headers) => {
-          assert(
-            headers.length >= 3 &&
-              headers.length <= 4 &&
-              new Set(headers).size === headers.length &&
-              headers.every((k) =>
-                ["identificador", "nombre", "correo", "mesa"].includes(k),
-              ) &&
-              ["identificador", "nombre", "mesa"].every((k) =>
-                headers.includes(k),
-              ),
-            400,
-            "Encabezados CSV inválidos.",
-          );
-          return headers;
-        },
-        bom: true,
-        skip_empty_lines: true,
-        trim: true,
-        max_record_size: 10000,
-      });
-    } catch {
-      assert(false, 400, "CSV mal formado.");
-    }
-    const rows = records.map((r) => {
+    draft();
+    res.json(planImport(db, parseParticipantsCSV(req.body.csv)));
+  });
+  app.post("/api/admin/participants/import", (req, res) => {
+    exact(req.body, ["csv", "previewHash"]);
+    const parsed = parseParticipantsCSV(req.body.csv);
+    const result = atomic(db, () => {
+      draft();
+      const plan = planImport(db, parsed);
+      if (parsed.format === "typed" || req.body.previewHash !== undefined)
+        assert(
+          req.body.previewHash === plan.previewHash,
+          409,
+          "La previsualización falta o cambió. Vuelve a revisar el archivo antes de confirmar.",
+        );
       assert(
-        Object.keys(r).length >= 3 &&
-          Object.keys(r).every((k) =>
-            ["identificador", "nombre", "correo", "mesa"].includes(k),
-          ) &&
-          ["identificador", "nombre", "mesa"].every((k) => k in r),
-        400,
-        "Encabezados esperados: identificador,nombre,correo,mesa.",
+        plan.summary.conflicts === 0,
+        409,
+        "Hay identificadores existentes con datos distintos. No se reemplazó ningún registro.",
       );
+      plan.rows
+        .filter((r) => r.status === "new")
+        .forEach((p) => insertParticipant(db, p));
+      if (plan.summary.new)
+        audit(db, "participants_imported", String(plan.summary.new));
       return {
-        id: r.identificador,
-        name: r.nombre,
-        email: r.correo || "",
-        tableId: /^[1-6]$/.test(r.mesa) ? Number(r.mesa) : 0,
+        count: plan.summary.new,
+        skipped: plan.summary.existing,
+        total: plan.summary.total,
       };
     });
-    const count = atomic(db, () => {
-      draft();
-      const n = addParticipants(rows);
-      audit(db, "participants_imported", String(n));
-      return n;
-    });
-    res.status(201).json({ count });
+    res.status(201).json(result);
   });
   function sendCodes(res, rows) {
     res
@@ -491,50 +451,73 @@ export function createApp(db, config) {
     });
     sendCodes(res, rows);
   });
-  app.put("/api/admin/offerings/:id", upload.single("photo"), (req, res) => {
-    exact(req.body, ["name"]);
-    const id = Number(req.params.id);
-    assert(Number.isInteger(id) && id >= 1 && id <= 6, 400, "Mesa inválida.");
-    assert(
-      typeof req.body.name === "string" &&
-        req.body.name.trim().length >= 2 &&
-        req.body.name.length <= 100,
-      400,
-      "Nombre inválido.",
-    );
-    let mime = null;
-    if (req.file) {
-      const b = req.file.buffer;
-      mime = b
-        .subarray(0, 8)
-        .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-        ? "image/png"
-        : b[0] === 255 && b[1] === 216 && b[2] === 255
-          ? "image/jpeg"
-          : b.toString("ascii", 0, 4) === "RIFF" &&
-              b.toString("ascii", 8, 12) === "WEBP"
-            ? "image/webp"
-            : null;
-      assert(mime, 400, "Solo fotos PNG, JPG o WebP (máximo 5 MB).");
-    }
-    atomic(db, () => {
-      draft();
-      if (mime)
-        db.prepare("UPDATE offerings SET name=?,photo=?,mime=? WHERE id=?").run(
-          req.body.name.trim(),
-          req.file.buffer,
-          mime,
-          id,
-        );
-      else
-        db.prepare("UPDATE offerings SET name=? WHERE id=?").run(
-          req.body.name.trim(),
-          id,
-        );
-      audit(db, "offering_updated", String(id));
-    });
-    res.json({ ok: true });
+  const galleryUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024, files: 5, fields: 4 },
   });
+  app.put(
+    "/api/admin/offerings/:id/gallery",
+    (req, res, next) => {
+      draft();
+      next();
+    },
+    galleryUpload.array("photos", 5),
+    async (req, res) => {
+      exact(req.body, ["name", "version", "manifest"]);
+      let manifest;
+      try {
+        manifest = JSON.parse(req.body.manifest);
+      } catch {
+        assert(false, 400, "Galería inválida.");
+      }
+      const uploads = [];
+      for (const file of req.files || [])
+        uploads.push(await optimizePhoto(file));
+      res.json(
+        saveGallery(db, {
+          id: Number(req.params.id),
+          name: req.body.name,
+          version: /^\d+$/.test(req.body.version)
+            ? Number(req.body.version)
+            : -1,
+          manifest,
+          uploads,
+        }),
+      );
+    },
+  );
+  // Compatibilidad con el editor anterior de una fotografía: sustituye la principal.
+  app.put(
+    "/api/admin/offerings/:id",
+    (req, res, next) => {
+      draft();
+      next();
+    },
+    upload.single("photo"),
+    async (req, res) => {
+      exact(req.body, ["name"]);
+      const id = Number(req.params.id),
+        o = db.prepare("SELECT * FROM offerings WHERE id=?").get(id);
+      assert(o, 400, "Mesa inválida.");
+      const photos = photoList(db, id),
+        uploads = req.file ? [await optimizePhoto(req.file)] : [];
+      let manifest = photos.map((p) => ({ id: p.id, primary: !!p.isPrimary }));
+      if (req.file) {
+        const index = manifest.findIndex((p) => p.primary);
+        if (index < 0) manifest.push({ upload: 0, primary: true });
+        else manifest[index] = { upload: 0, primary: true };
+      }
+      res.json(
+        saveGallery(db, {
+          id,
+          name: req.body.name,
+          version: o.gallery_version,
+          manifest,
+          uploads,
+        }),
+      );
+    },
+  );
   app.post("/api/admin/election", (req, res) => {
     exact(req.body, ["action", "password"]);
     reauth(req.body);

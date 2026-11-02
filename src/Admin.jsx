@@ -32,6 +32,8 @@ import {
   Modal,
   Offering,
 } from "./components";
+import GalleryEditor, { galleryPayload } from "./GalleryEditor";
+import ImportPreview from "./ImportPreview";
 export default function Admin() {
   const [csrf, setCsrf] = useState(null),
     [loading, setLoading] = useState(true),
@@ -46,6 +48,9 @@ export default function Admin() {
     [search, setSearch] = useState(""),
     [filter, setFilter] = useState("all"),
     [logs, setLogs] = useState([]);
+  const [importPreview, setImportPreview] = useState(null),
+    [participantType, setParticipantType] = useState("integrante");
+  const galleryRef = useRef([]);
   const api = (p, o = {}) => request(`/admin${p}`, { csrf, ...o });
   async function refresh() {
     try {
@@ -122,18 +127,38 @@ export default function Admin() {
               ...(modal.type === "add" ? { id: f.get("id") } : {}),
               name: f.get("name"),
               email: f.get("email"),
-              tableId: Number(f.get("tableId")),
+              type: f.get("type"),
+              tableId:
+                f.get("type") === "solo_votante"
+                  ? null
+                  : Number(f.get("tableId")),
             },
           },
         );
       } else if (modal.type === "import") {
-        const file = f.get("csv");
-        if (file.size > 1000000) throw new Error("El CSV supera 1 MB.");
+        if (!importPreview) {
+          const file = f.get("csv");
+          if (!file || file.size > 1000000)
+            throw new Error("Selecciona un CSV de hasta 1 MB.");
+          const csv = await file.text(),
+            plan = await api("/participants/import/preview", {
+              method: "POST",
+              body: { csv },
+            });
+          setImportPreview({ csv, plan });
+          return;
+        }
         const r = await api("/participants/import", {
           method: "POST",
-          body: { csv: await file.text() },
+          body: {
+            csv: importPreview.csv,
+            previewHash: importPreview.plan.previewHash,
+          },
         });
-        setNotice(`${r.count} participantes importados.`);
+        setNotice(
+          `${r.count} participantes nuevos; ${r.skipped} ya existentes, sin cambios. Emite los códigos pendientes para entregar.`,
+        );
+        setImportPreview(null);
       } else if (modal.type === "codes") {
         const b = await api("/codes/export", {
           method: "POST",
@@ -169,14 +194,16 @@ export default function Admin() {
             : "La votación se cerró definitivamente.",
         );
       } else if (modal.type === "offering") {
-        f.delete("password");
-        if (!f.get("photo")?.size) f.delete("photo");
-        await api(`/offerings/${modal.o.id}`, {
+        await api(`/offerings/${modal.o.id}/gallery`, {
           method: "PUT",
-          body: f,
+          body: galleryPayload(
+            galleryRef.current,
+            f.get("name"),
+            modal.o.galleryVersion,
+          ),
           file: true,
         });
-        setNotice("Ofrenda actualizada.");
+        setNotice("Nombre y galería actualizados.");
       }
       setModal(null);
       await refresh();
@@ -196,7 +223,9 @@ export default function Admin() {
         (filter === "all" ||
           (filter === "voted" && p.voted) ||
           (filter === "pending" && !p.voted && p.enabled) ||
-          (filter === "disabled" && !p.voted && !p.enabled)),
+          (filter === "disabled" && !p.voted && !p.enabled) ||
+          (filter === "solo" && p.type === "solo_votante") ||
+          (filter === "member" && p.type === "integrante")),
     ) || [];
   if (loading) return <div className="loading">Preparando panel…</div>;
   if (!csrf)
@@ -300,7 +329,7 @@ export default function Admin() {
                     participants:
                       "Gestiona registros y códigos de acceso individuales.",
                     offerings:
-                      "Configura el nombre y la foto de cada ofrenda antes de abrir.",
+                      "Configura el nombre y hasta cinco fotos por mesa antes de abrir.",
                     results:
                       "El conteo se revela únicamente al cerrar las votaciones.",
                     audit:
@@ -334,6 +363,16 @@ export default function Admin() {
               {tab === "overview" && (
                 <>
                   <div className="stats">
+                    <Stat
+                      icon={Users}
+                      label="Integrantes de mesas"
+                      value={p.total - p.solo.total}
+                    />
+                    <Stat
+                      icon={Users}
+                      label="Solo votantes"
+                      value={p.solo.total}
+                    />
                     <Stat
                       icon={Users}
                       label="Participantes registrados"
@@ -381,6 +420,27 @@ export default function Admin() {
                           </b>
                         </div>
                       ))}
+                      <div className="progress-row solo-participation">
+                        <span className="table-number">SV</span>
+                        <div>
+                          <div>
+                            <strong>Solo votantes</strong>
+                            <span>
+                              {p.solo.voted} de {p.solo.total} participaron
+                            </span>
+                          </div>
+                          <progress
+                            value={p.solo.voted}
+                            max={p.solo.total || 1}
+                          />
+                        </div>
+                        <b>
+                          {p.solo.total
+                            ? Math.round((100 * p.solo.voted) / p.solo.total)
+                            : 0}
+                          %
+                        </b>
+                      </div>
                     </section>
                     <section className="panel election-control">
                       <Flower2 size={40} />
@@ -448,6 +508,8 @@ export default function Admin() {
                         onChange={(e) => setFilter(e.target.value)}
                       >
                         <option value="all">Todos los estados</option>
+                        <option value="solo">Solo votantes</option>
+                        <option value="member">Integrantes</option>
                         <option value="pending">
                           Habilitados · pendientes
                         </option>
@@ -462,6 +524,7 @@ export default function Admin() {
                             className="secondary"
                             onClick={() => {
                               setError("");
+                              setImportPreview(null);
                               setModal({ type: "import" });
                             }}
                           >
@@ -472,6 +535,7 @@ export default function Admin() {
                             className="secondary"
                             onClick={() => {
                               setError("");
+                              setParticipantType("integrante");
                               setModal({ type: "add" });
                             }}
                           >
@@ -498,6 +562,7 @@ export default function Admin() {
                         <tr>
                           <th>Participante</th>
                           <th>Identificador</th>
+                          <th>Tipo</th>
                           <th>Mesa</th>
                           <th>Estado</th>
                           <th>Acciones</th>
@@ -512,7 +577,18 @@ export default function Admin() {
                             </td>
                             <td>{p.id}</td>
                             <td>
-                              <span className="table-number">{p.tableId}</span>
+                              {p.type === "solo_votante"
+                                ? "Solo votante"
+                                : "Integrante"}
+                            </td>
+                            <td>
+                              {p.tableId === null ? (
+                                <span>Sin mesa</span>
+                              ) : (
+                                <span className="table-number">
+                                  {p.tableId}
+                                </span>
+                              )}
                             </td>
                             <td>
                               <span
@@ -531,6 +607,7 @@ export default function Admin() {
                                   className="text-button edit-participant"
                                   onClick={() => {
                                     setError("");
+                                    setParticipantType(p.type);
                                     setModal({ type: "edit", p });
                                   }}
                                 >
@@ -576,7 +653,7 @@ export default function Admin() {
                   <div className="offering-grid admin-offerings">
                     {data.offerings.map((o) => (
                       <div key={o.id}>
-                        <Offering o={{ ...o, version: Date.now() }} preview />
+                        <Offering o={o} preview />
                         {data.status === "draft" && (
                           <button
                             className="secondary full"
@@ -740,6 +817,7 @@ export default function Admin() {
             }[modal.type]
           }
           onClose={() => !busy && setModal(null)}
+          wide={["import", "offering"].includes(modal.type)}
         >
           <form onSubmit={submitAction} autoComplete="off">
             {(modal.type === "add" || modal.type === "edit") && (
@@ -774,8 +852,25 @@ export default function Admin() {
                   />
                 </label>
                 <label>
+                  Tipo de participante
+                  <select
+                    name="type"
+                    value={participantType}
+                    onChange={(e) => setParticipantType(e.target.value)}
+                  >
+                    <option value="integrante">Integrante de mesa</option>
+                    <option value="solo_votante">
+                      Solo votante (sin mesa)
+                    </option>
+                  </select>
+                </label>
+                <label>
                   Mesa asignada
-                  <select name="tableId" defaultValue={modal.p?.tableId || 1}>
+                  <select
+                    name="tableId"
+                    defaultValue={modal.p?.tableId || 1}
+                    disabled={participantType === "solo_votante"}
+                  >
                     {[1, 2, 3, 4, 5, 6].map((n) => (
                       <option key={n} value={n}>
                         Mesa {n}
@@ -787,32 +882,55 @@ export default function Admin() {
             )}
             {modal.type === "edit" && (
               <p className="help">
-                Si cambias la mesa, se invalidará el código anterior. Emite y
-                entrega uno nuevo antes de abrir.
+                Si cambias la mesa o el tipo, se invalidará el código anterior.
+                Emite y entrega uno nuevo antes de abrir.
               </p>
             )}
-            {modal.type === "import" && (
-              <>
-                <p>
-                  Todos los datos se validan antes de importar. Si hay un error,
-                  no se guardará ningún registro.
-                </p>
-                <code className="csv-example">
-                  identificador,nombre,correo,mesa
-                  <br />
-                  EMP001,Ana López,,1
-                </code>
-                <label>
-                  Archivo CSV UTF-8 (hasta 1 MB)
-                  <input
-                    name="csv"
-                    type="file"
-                    accept=".csv,text/csv"
-                    required
-                  />
-                </label>
-              </>
-            )}
+            {modal.type === "import" &&
+              (!importPreview ? (
+                <>
+                  <p>
+                    Primero revisa el archivo completo. No se guardará ningún
+                    registro hasta que confirmes la previsualización.
+                  </p>
+                  <code className="csv-example">
+                    id_participante,nombre,mesa,tipo
+                    <br />
+                    OF-001,Ana López,1,integrante
+                    <br />
+                    OF-035,Luis Pérez,,solo_votante
+                  </code>
+                  <label>
+                    Archivo CSV UTF-8 (hasta 1 MB)
+                    <input
+                      name="csv"
+                      type="file"
+                      accept=".csv,text/csv"
+                      required
+                      disabled={busy}
+                    />
+                  </label>
+                  <p className="help">
+                    También se admite el formato anterior
+                    identificador,nombre,correo,mesa.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <ImportPreview plan={importPreview.plan} />
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={busy}
+                    onClick={() => {
+                      setImportPreview(null);
+                      setError("");
+                    }}
+                  >
+                    Elegir otro archivo
+                  </button>
+                </>
+              ))}
             {modal.type === "codes" && (
               <p>
                 Se generará un CSV para los participantes que aún no tienen
@@ -858,17 +976,14 @@ export default function Admin() {
                     maxLength={100}
                   />
                 </label>
-                <label>
-                  Foto de la ofrenda (PNG, JPG o WebP, hasta 5 MB)
-                  <input
-                    name="photo"
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp"
-                  />
-                </label>
-                <p className="help">
-                  Si no eliges una foto, se conserva la imagen actual.
-                </p>
+                <GalleryEditor
+                  key={modal.o.id}
+                  offering={modal.o}
+                  onChange={(items) => {
+                    galleryRef.current = items;
+                  }}
+                  disabled={busy}
+                />
               </>
             )}
             {["codes", "regenerate", "open", "close"].includes(modal.type) && (
@@ -895,12 +1010,18 @@ export default function Admin() {
               </button>
               <button
                 className={modal.type === "close" ? "danger" : "primary"}
-                disabled={busy}
+                disabled={
+                  busy ||
+                  (modal.type === "import" &&
+                    importPreview?.plan.summary.conflicts > 0)
+                }
               >
                 {busy
                   ? "Procesando…"
                   : modal.type === "import"
-                    ? "Validar e importar"
+                    ? importPreview
+                      ? "Confirmar importación"
+                      : "Previsualizar importación"
                     : modal.type === "close"
                       ? "Cerrar votación"
                       : "Confirmar"}

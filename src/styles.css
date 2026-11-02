@@ -1508,3 +1508,263 @@ td small {
 .edit-participant {
   margin-bottom: 10px;
 }
+/* Galerías locales y previsualización de importación. */
+.modal-wide {
+  max-width: 860px;
+}
+.view-photos {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  margin-top: 13px;
+  background: #f3ecf5;
+  border: 1px solid #e8dcec;
+  color: var(--purple);
+  border-radius: 6px;
+  padding: 9px;
+  font-size: 11px;
+}
+.own {
+  opacity: 1;
+  background: #f8f3f0;
+}
+.own img {
+  filter: none;
+}
+.own .select-button,
+.own .muted-button {
+  opacity: 0.6;
+}
+.gallery-stage {
+  height: min(52vh, 520px);
+  background: #22142e;
+  border-radius: 12px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
+}
+.gallery-stage img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.gallery-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  margin: 15px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.gallery-thumbnails {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin: 15px 0;
+}
+.gallery-thumbnails button {
+  width: 82px;
+  height: 60px;
+  background: none;
+  padding: 3px;
+  border: 2px solid transparent;
+  border-radius: 7px;
+  overflow: hidden;
+}
+.gallery-thumbnails button.active {
+  border-color: var(--orange);
+}
+.gallery-thumbnails img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 3px;
+}
+.gallery-editor {
+  margin-top: 22px;
+}
+.gallery-editor-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  gap: 10px;
+}
+.gallery-editor-heading strong {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--purple);
+}
+.gallery-editor-heading > span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.gallery-editor-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+}
+.photo-edit {
+  display: flex;
+  gap: 15px;
+  background: #fffdf9;
+  border: 1px solid var(--line);
+  padding: 12px;
+  border-radius: 10px;
+}
+.photo-edit > img {
+  width: 140px;
+  height: 105px;
+  object-fit: cover;
+  border-radius: 7px;
+  background: #eee4ed;
+}
+.photo-edit > div {
+  flex: 1;
+  min-width: 0;
+}
+.photo-edit strong {
+  font-size: 12px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.primary-label {
+  background: #f6e8cd;
+  color: #a46a28;
+  font-size: 9px;
+  padding: 5px 7px;
+  border-radius: 5px;
+}
+.photo-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 9px;
+}
+.photo-edit-actions .secondary {
+  font-size: 10px;
+  min-height: 30px;
+  padding: 6px 10px;
+  gap: 6px;
+}
+.replace-photo {
+  font-size: 10px;
+  font-weight: 400;
+  color: #9b7ba5;
+  margin: 5px 0 0;
+}
+.replace-photo input {
+  font-size: 10px;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  margin: 0;
+}
+.replace-photo input::file-selector-button {
+  padding: 4px;
+}
+.import-summary {
+  display: flex;
+  gap: 13px;
+  flex-wrap: wrap;
+  margin: 15px 0;
+  font-size: 12px;
+}
+.import-summary span {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+}
+.import-summary strong {
+  color: var(--purple);
+}
+.import-distribution {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  border-radius: 7px;
+  background: #f2eadf;
+  padding: 13px;
+}
+.preview-table {
+  max-height: 340px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  margin-bottom: 18px;
+}
+.preview-table th {
+  position: sticky;
+  top: 0;
+}
+.preview-table td {
+  padding: 11px 13px;
+  font-size: 10px;
+}
+.preview-table th {
+  padding: 12px 13px;
+}
+.stats {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.solo-participation {
+  border-top: 1px solid var(--line);
+  margin-top: 22px;
+}
+.solo-participation .table-number {
+  background: #f9efd9;
+  color: #ae7a37;
+}
+.import-preview h3 {
+  font-size: 18px;
+}
+@media (max-width: 760px) {
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .photo-edit > img {
+    width: 85px;
+    height: 95px;
+  }
+  .photo-edit {
+    gap: 10px;
+  }
+  .gallery-controls {
+    gap: 8px;
+  }
+  .gallery-controls button {
+    font-size: 10px;
+    padding: 9px;
+    gap: 4px;
+  }
+  .gallery-controls span {
+    font-size: 10px;
+  }
+  .gallery-thumbnails button {
+    width: 55px;
+    height: 42px;
+  }
+  .gallery-thumbnails {
+    gap: 5px;
+  }
+  .photo-edit-actions {
+    gap: 3px;
+    flex-wrap: wrap;
+  }
+  .photo-edit-actions .icon {
+    padding: 5px;
+  }
+  .modal-wide {
+    padding: 23px;
+  }
+  .gallery-stage {
+    height: 42vh;
+  }
+}

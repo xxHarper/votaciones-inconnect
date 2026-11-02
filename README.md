@@ -4,7 +4,7 @@ Aplicación local para el concurso interno de ofrendas del Día de Muertos. Reac
 
 ## Requisitos
 
-- **Node.js 24 LTS, versión 24.14 o posterior de la rama 24**, con npm. Se usa SQLite integrado en Node, sin compilar módulos nativos. [Documentación de SQLite en Node](https://nodejs.org/download/release/latest-v24.x/docs/api/sqlite.html).
+- **Node.js 24 LTS, versión 24.14 o posterior de la rama 24**, con npm. Se usa SQLite integrado en Node. El procesamiento de fotos usa `sharp` con binarios para el sistema operativo del servidor. Instala las dependencias en Windows o Linux según dónde se ejecutará; conserva las dependencias opcionales de npm. [Documentación de SQLite en Node](https://nodejs.org/download/release/latest-v24.x/docs/api/sqlite.html).
 - Windows 10/11 o Linux, disco local y navegador moderno en las computadoras autorizadas.
 - Internet únicamente para instalar Node y descargar dependencias inicialmente. Después, conservar el proyecto con `node_modules` instalado en el sistema operativo del servidor y `dist` generado. No compartir `node_modules` entre Windows y Linux.
 - Evitar carpetas sincronizadas o unidades de red para SQLite. Hacer una instalación de producción en una carpeta local protegida.
@@ -20,7 +20,7 @@ npm run build
 npm start
 ```
 
-`setup` crea `.env` desde `.env.example`, genera un secreto aleatorio y pide una contraseña de **14–256 caracteres** dos veces, sin mostrarla. No hay contraseña predeterminada. Usa una frase larga y exclusiva. No se guarda la contraseña: solo un hash scrypt con sal aleatoria. La base y sus seis mesas se crean automáticamente mediante la migración versionada `server/migrations/001_initial.sql`.
+`setup` crea `.env` desde `.env.example`, genera un secreto aleatorio y pide una contraseña de **14–256 caracteres** dos veces, sin mostrarla. No hay contraseña predeterminada. Usa una frase larga y exclusiva. No se guarda la contraseña: solo un hash scrypt con sal aleatoria. La base y sus seis mesas se crean automáticamente mediante las migraciones versionadas de `server/migrations/` (actualmente esquema 2).
 
 La estación está en `http://localhost:3000` y la administración en `http://localhost:3000/admin`. La base vacía no incluye participantes de ejemplo. Los dibujos locales son ilustraciones de referencia, identificadas como tales; carga las fotos reales antes de abrir.
 
@@ -76,21 +76,24 @@ En producción no hacen falta orígenes adicionales. `ALLOWED_ORIGINS` permite o
 ## Operación del concurso
 
 1. Entrar a `/admin` desde una computadora bajo control del organizador.
-2. Registrar personas individualmente o importar CSV UTF-8:
+2. Registrar personas individualmente o importar CSV UTF-8. El formato actual es:
 
    ```csv
-   identificador,nombre,correo,mesa
-   EMP001,Ana López,ana@inconnect.local,1
-   EMP002,"Pérez, Luis",,6
+   id_participante,nombre,mesa,tipo
+   OF-001,Ana López,1,integrante
+   OF-035,Luis Pérez,,solo_votante
    ```
 
-   `identificador`, `nombre`, `mesa` son obligatorios; `correo` es opcional. Identificador de 1–64 letras, números, guion o guion bajo, sin espacios. Nombre de 2–120 caracteres. Mesas enteras del 1 al 6. Los identificadores no pueden repetirse, sin distinguir mayúsculas. Hasta 10 000 filas y 1 MB por petición. El lote completo se rechaza ante errores, duplicados o correo inválido. Se aceptan nombres entrecomillados con comas. No se sobrescriben registros existentes.
-   Antes de abrir también puedes editar nombres, correos y mesas. Cambiar una mesa invalida el código emitido para esa persona; vuelve a emitir y entregar uno nuevo antes de abrir. El identificador se conserva.
-3. Configurar nombres y fotos PNG/JPG/WebP de las seis ofrendas, hasta 5 MB cada una. Las fotos se guardan **dentro de SQLite**, por lo que entran en el respaldo.
+   Los integrantes requieren mesa del 1 al 6 y no pueden votarla. `solo_votante` requiere mesa vacía y puede elegir cualquiera de las seis. Todos votan una sola vez con código personal; no necesitan correo ni contraseña. También se admite el CSV anterior `identificador,nombre,correo,mesa`, que crea integrantes. Identificadores de 1–64 letras, números, guion o guion bajo; nombres de 2–120 caracteres; hasta 10 000 filas y 1 MB. Se aceptan BOM UTF-8, nombres entrecomillados y comas en nombres.
+
+   **Importar CSV → Previsualizar importación** muestra todas las personas, la distribución y los registros nuevos, existentes o en conflicto. **Confirmar importación** agrega solo los nuevos. Reimportar el mismo archivo omite los idénticos sin cambiar códigos ni votos. Duplicados dentro del CSV, tipos inválidos o mesas incorrectas impiden validar. Si un ID existente tiene datos distintos, el conflicto bloquea el lote completo: no se sobrescribe automáticamente. Para una corrección deliberada durante preparación usa **Editar participante**; cambiar su mesa o tipo invalida su código anterior y exige emitir uno nuevo.
+3. Configurar el nombre y la galería de cada ofrenda: hasta **cinco fotografías por mesa**, JPG/JPEG, PNG o WebP, máximo 5 MB y 40 megapíxeles por archivo. En **Ofrendas → Editar ofrenda** se previsualizan fotos antes de guardar, se elige una principal, se ordenan con las flechas y se pueden eliminar o reemplazar. **Confirmar** aplica todo junto; **Cancelar** conserva lo guardado. Si otro administrador modifica esa galería, se rechaza una edición obsoleta y se pide abrir de nuevo el editor.
+
+   El backend comprueba firma, formato y decodificación completa; rechaza archivos dañados y recodifica a WebP sin metadatos, hasta 1920 px de lado y con miniaturas de hasta 640 px. El nombre del archivo o su MIME declarado no bastan para aceptarlo. Las fotos y miniaturas se guardan **dentro de SQLite en el servidor local**, sin servicios externos. Todas quedan incluidas en `npm run backup`. En las tarjetas, **Ver fotos** abre la galería ampliada con controles, miniaturas y teclado (←/→ y Escape). Un integrante puede ver las fotos de su propia mesa, aunque su botón para votarla sigue bloqueado.
 4. Usar **Emitir códigos** y confirmar contraseña. Se genera un CSV únicamente para registros sin código emitido. Cada código tiene 16 caracteres y 80 bits de aleatoriedad criptográfica, sin I, O, 0 ni 1. El código se ve solo en esta respuesta de descarga; la base conserva exclusivamente HMAC-SHA-256 con secreto local. No se guardan archivos de códigos en el servidor de producción.
 5. Guardar esa descarga en un lugar protegido, entregar cada código individualmente y eliminar el archivo cuando ya no se necesite. **No es posible volver a descargar el mismo código**. Si la descarga falla después de confirmarse, regenerar los códigos afectados. No se muestra ni se conserva el valor anterior.
 6. Abrir votación y confirmar contraseña. Debe existir al menos una persona y todas deben tener un código emitido. Desde entonces se bloquean altas, importación, identidad, mesa y edición de ofrendas. No se puede volver a preparación.
-7. Supervisar participación total y por mesa de origen. Los estados son **sin código**, **habilitado · pendiente** y **ya votó**. El panel nunca muestra la selección de una persona ni el conteo por ofrenda mientras esté abierto.
+7. Supervisar total de participantes, integrantes por mesa, solo votantes, personas que ya votaron y pendientes. La participación total incluye a ambos tipos; el grupo sin mesa aparece separado de las seis mesas. Los estados son **sin código**, **habilitado · pendiente** y **ya votó**. El panel nunca muestra la selección de una persona ni el conteo por ofrenda mientras esté abierto.
 8. Cerrar votación y confirmar contraseña. El cierre es definitivo e invalida las sesiones de votante. Consultar ranking, votos, porcentajes, participación y empates, y exportar resultados CSV. Los porcentajes por ofrenda usan el total de votos válidos; la participación usa el total de personas registradas. Con cero votos hay seis empates en primer lugar.
 9. Cerrar la sesión administrativa antes de dejar la computadora. El panel administrativo no debe quedar abierto en una estación de uso público.
 
@@ -98,7 +101,7 @@ En producción no hacen falta orígenes adicionales. `ALLOWED_ORIGINS` permite o
 
 En Participantes, **Regenerar código** requiere volver a escribir el identificador exacto y la contraseña del administrador. Solo se permite si la persona no votó y el concurso no terminó; invalida el código anterior y todas sus sesiones, emite un nuevo CSV y deja registro administrativo sin preferencias de voto. Es la excepción operativa permitida después de la apertura.
 
-No existe interfaz para cambiar mesas, eliminar votos, habilitar un segundo voto o reabrir el concurso. Una asignación incorrecta detectada después de abrir exige detener el proceso y organizar un nuevo concurso sobre una base nueva, con códigos nuevos y comunicación interna explícita. No editar SQLite manualmente. Cambiar la contraseña administrativa con el servidor detenido:
+Después de abrir no existe interfaz para cambiar mesas o tipos, eliminar votos, habilitar un segundo voto o reabrir el concurso. Una asignación incorrecta detectada después de abrir exige detener el proceso y organizar un nuevo concurso sobre una base nueva, con códigos nuevos y comunicación interna explícita. No editar SQLite manualmente. Cambiar la contraseña administrativa con el servidor detenido:
 
 ```sh
 npm run admin:reset
@@ -109,7 +112,7 @@ Esto invalida las sesiones administrativas. El registro de actividad contiene op
 ## Modo de computadora compartida
 
 - La pantalla pública solicita el código personal y muestra nombre y mesa solo después de validarlo en el servidor.
-- Presenta las seis mesas; la propia aparece bloqueada. El servidor vuelve a validar esa restricción.
+- Presenta las seis mesas; para integrantes, el voto por la propia aparece bloqueado, pero su galería se puede consultar. Para solo votantes se habilitan las seis opciones. El servidor vuelve a comprobar las reglas.
 - Elegir y confirmar son pasos separados. Un voto exitoso elimina la sesión en el servidor y limpia identidad, código, selección y credencial en React; el agradecimiento no contiene información personal.
 - Regreso automático al acceso después de 7 segundos y botón para hacerlo inmediatamente.
 - Cierre por 90 segundos de inactividad, configurable en `VOTER_IDLE_SECONDS`; límite absoluto de 600 segundos en `VOTER_MAX_SECONDS`. Los movimientos de entrada reales renuevan la inactividad con comprobación del servidor. Las consultas periódicas de estado no renuevan la sesión.
@@ -120,7 +123,7 @@ Esto invalida las sesiones administrativas. El registro de actividad contiene op
 
 ## Persistencia, secreto y transacciones
 
-`participants` guarda identidad, mesa de pertenencia, hash de código y estado. `ballots` guarda solamente un UUID aleatorio y mesa elegida: sin identificador de participante, código, sesión, fecha ni secuencia autoincremental. Al emitir el voto se ejecuta **BEGIN IMMEDIATE**, se comprueba apertura, sesión, pertenencia y estado, se hace una actualización condicional de `voted=0` a `voted=1` borrando el hash, se inserta la papeleta y se revocan todas las sesiones. Todo se confirma junto o se revierte junto. WAL, `synchronous=FULL`, claves foráneas, restricciones y triggers preservan las invariantes. Las consultas usan parámetros, y la API rechaza campos inesperados.
+`participants` guarda identidad, tipo, mesa de pertenencia (NULL solo para `solo_votante`), hash de código y estado. SQLite verifica la correspondencia entre tipo y mesa. `ballots` guarda solamente un UUID aleatorio y mesa elegida: sin identificador de participante, código, sesión, fecha ni secuencia autoincremental. Al emitir el voto se ejecuta **BEGIN IMMEDIATE**, se comprueba apertura, sesión, pertenencia y estado, se hace una actualización condicional de `voted=0` a `voted=1` borrando el hash, se inserta la papeleta y se revocan todas las sesiones. Todo se confirma junto o se revierte junto. WAL, `synchronous=FULL`, claves foráneas, restricciones y triggers preservan las invariantes. Las consultas usan parámetros, y la API rechaza campos inesperados.
 
 No se registran cuerpos de peticiones, elecciones ni accesos de votantes. Si se añade un proxy, APM o registros HTTP, no registrar Authorization, cookies, cuerpos ni respuestas de autenticación/voto. Los resultados y las identidades solo son accesibles con sesión administrativa. No hay endpoint para votos individuales.
 
@@ -149,7 +152,7 @@ En Windows, por ejemplo `npm run backup -- "D:\Respaldos\concurso-2026.sqlite"`.
    npm run restore -- /ruta/protegida/concurso-2026.sqlite --confirm
    ```
 
-4. Se verifica integridad, claves foráneas, versión, seis mesas y correspondencia entre papeletas y participantes que votaron. Se invalidan sesiones. Se crea automáticamente una copia previa de la base actual junto a ella y se reemplaza la base validada.
+4. Se verifica integridad, claves foráneas, versión (se admiten respaldos de esquemas 1 y 2), seis mesas y correspondencia entre papeletas y participantes que votaron. Los respaldos antiguos se migran sobre una copia temporal. Se invalidan sesiones. Se crea automáticamente una copia previa de la base actual junto a ella y se reemplaza la base validada.
 5. Ejecutar `npm start` y comprobar participantes y estado en `/admin`.
 
 **Un respaldo anterior a votos ya recibidos no incluye esos votos**: restaurarlo permitiría repetirlos. Restaurar solamente como recuperación controlada, después de evaluar ese punto y detener las estaciones. Nunca usar la restauración para reabrir o modificar elecciones. El script exige servidor detenido mediante un archivo de bloqueo exclusivo `DB_PATH.lock`. Si hubo un cierre forzado y queda un bloqueo residual, verificar el PID del archivo con `Get-Process -Id PID` en Windows o `ps -p PID` en Linux; solo después de confirmar que no existe un servidor activo, eliminar ese archivo `.lock`. No borrar archivos `-wal` o `-shm` a mano.
@@ -177,6 +180,47 @@ npm run test:e2e
 En Linux, si faltan bibliotecas del navegador, instala las dependencias de prueba con `npx playwright install --with-deps chromium` (requiere permisos administrativos del sistema).
 
 La descarga de Chromium solo es necesaria para las pruebas de desarrollo, no para operar el concurso. El entorno E2E genera su propia base temporal, contraseña y códigos; ejecuta el build primero. No se recomienda ejecutar comandos de desarrollo desde una terminal con variables `DB_PATH` de producción exportadas.
+
+## Actualización del proyecto existente al esquema 2
+
+Detén el servidor y conserva su `.env`, especialmente `CODE_PEPPER`. No recrees la base ni vuelvas a emitir códigos ya entregados solo por actualizar:
+
+```sh
+npm ci
+npm run backup -- backups/antes-de-actualizar.sqlite
+npm run migrate
+npm run build
+npm start
+```
+
+Si es una instalación vacía sin `.env` ni base previa, usa la instalación rápida con `npm run setup`. La migración `002_participant_types_and_galleries.sql` convierte los registros anteriores en integrantes, conserva identidades, códigos hasheados, estado, votos, sesiones y credenciales, y copia cada foto anterior como principal de su galería. Las imágenes anteriores se conservan byte a byte; las nuevas se optimizan al cargarlas. Antes de modificar una base existente, el migrador verifica integridad y crea una instantánea `DB_PATH.before-migration-v1-<fecha>.sqlite`. La modificación ocurre en una transacción, con comprobación final de claves foráneas; ante fallo se revierte. También se aplica al iniciar, pero es preferible ejecutar `npm run migrate` previamente, con el servidor detenido. No cambies el archivo de migración 001 ni borres votos.
+
+### Importar las 40 personas del concurso real
+
+Hay una copia local del archivo facilitado en `data/imports/ofrendavote_participantes.csv`, dentro de la carpeta de datos ignorada por Git. No se sirve públicamente ni se importa automáticamente. Selecciona ese archivo (o el original en Descargas) en **Participantes → Importar CSV → Previsualizar importación**. Verifica:
+
+| Grupo | Personas |
+| --- | ---: |
+| Mesa 1 | 8 |
+| Mesa 2 | 6 |
+| Mesa 3 | 8 |
+| Mesa 4 | 6 |
+| Mesa 5 | 5 |
+| Mesa 6 | 1 |
+| Solo votantes | 6 |
+| Total | 40 |
+
+Confirma el lote y usa **Emitir códigos** con la contraseña administrativa. Se generan y exportan códigos exclusivamente para quienes todavía no tienen uno; los seis solo votantes figuran con mesa vacía en el CSV de entrega. No es posible recuperar un código anterior desde su hash. Guarda y entrega la descarga individualmente. La importación y las galerías permanecen bloqueadas una vez abierto el concurso.
+
+### Comprobación antes de abrir la votación real
+
+1. En **Resumen**: 40 participantes, 34 integrantes y 6 solo votantes; distribución por mesa como en la tabla. Si ya había otras personas, la importación no las elimina: revisa cualquier diferencia antes de abrir.
+2. En **Participantes**: ningún registro sin código; los 40 códigos ya entregados. Para un concurso aún sin iniciar, 0 personas han votado y hay 40 pendientes.
+3. En **Ofrendas**: seis tarjetas con nombres correctos, de una a cinco fotos reales por mesa según el material disponible y una principal elegida. Comprueba orden, ampliación y cierre con **Ver fotos**. El sistema permite cero fotos y muestra la ilustración; verifica las fotos reales antes de abrir.
+4. Ejecuta `npm test`, `npm run build` y, con Chromium instalado, `npm run test:e2e`. Usan exclusivamente bases temporales; **no pruebes emitiendo votos en producción**. Se conservan las pruebas anteriores. Las nuevas prueban 36 combinaciones de solo votantes/mesas, ocho conexiones concurrentes, importación idempotente, migración con datos y rollback, galerías, respaldo/restauración y el flujo del kiosco.
+5. Crea un respaldo y comprueba acceso desde las computadoras autorizadas. Abre la votación solo cuando la distribución, los códigos y las galerías sean correctos. La apertura bloquea identidades, tipos, mesas y fotos en backend y SQLite.
+
+Para ejecutar la misma batería sobre un CSV privado específico sin cargar producción, define `REAL_PARTICIPANTS_CSV` antes de `npm test` (por ejemplo, en PowerShell: `$env:REAL_PARTICIPANTS_CSV="C:\ruta\ofrendavote_participantes.csv"`). Si no se define, se usan 40 nombres ficticios con la misma distribución. Ningún test crea votos en la base configurada de producción.
 
 ## Demostración separada
 

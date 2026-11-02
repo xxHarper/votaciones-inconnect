@@ -1,12 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+  existsSync,
+  readFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { connect, migrate } from "../server/db.js";
 import { passwordHash, codeHash, digest } from "../server/security.js";
 import { castVote } from "../server/voting.js";
+import { optimizePhoto, saveGallery } from "../server/photos.js";
 import { lockDatabase } from "../server/lock.js";
 test("respaldo en línea y restauración verificada, preservación de votos, bloqueo y sesiones revocadas", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "ov-ops-")),
@@ -84,6 +91,17 @@ test("reinicio real del servidor conserva voto, estado y prohibición de reutili
   db.prepare(
     "INSERT INTO participants(id,name,table_id,code_hash,issued) VALUES(?,?,?,?,1)",
   ).run("A", "Ana", 1, codeHash(code, pepper));
+  const image = await optimizePhoto({
+    buffer: readFileSync(new URL("./fixtures/photo.png", import.meta.url)),
+  });
+  saveGallery(db, {
+    id: 1,
+    name: "Ofrenda persistente",
+    version: 0,
+    manifest: [{ upload: 0, primary: true }],
+    uploads: [image],
+  });
+  const imageUrl = `/api/offerings/1/photos/${image.id}`;
   db.exec("UPDATE election SET status='open'");
   db.close();
   const probe = createServer();
@@ -160,6 +178,9 @@ test("reinicio real del servidor conserva voto, estado y prohibición de reutili
     (await (await fetch(origin + "/api/public")).json()).status,
     "open",
   );
+  const persisted = await fetch(origin + imageUrl);
+  assert.equal(persisted.status, 200);
+  assert.ok(Buffer.from(await persisted.arrayBuffer()).equals(image.data));
   await stop();
   const check = connect(path);
   assert.equal(check.prepare("SELECT COUNT(*) n FROM ballots").get().n, 1);

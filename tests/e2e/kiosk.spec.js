@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { test, expect } from "@playwright/test";
 const code = (i) =>
   `ABCDEFGHJKLMNPQ${String.fromCharCode(65 + i)}`.replace("I", "K");
@@ -159,7 +160,13 @@ test("preparación completa: importación, foto, descarga única, apertura, voto
       "identificador,nombre,correo,mesa\nPC001,Ana de prueba,,1\nPC002,Luis de prueba,,2",
     ),
   });
-  await page.getByRole("button", { name: "Validar e importar" }).click();
+  await page.getByRole("button", { name: "Previsualizar importación" }).click();
+  await expect(
+    page
+      .getByRole("region", { name: "Previsualización de participantes" })
+      .locator("tbody tr"),
+  ).toHaveCount(2);
+  await page.getByRole("button", { name: "Confirmar importación" }).click();
   await expect(page.locator("tbody tr")).toHaveCount(2);
   await page
     .getByRole("button", { name: "Editar participante", exact: true })
@@ -191,10 +198,7 @@ test("preparación completa: importación, foto, descarga única, apertura, voto
   await page.getByLabel("Foto de la ofrenda").setInputFiles({
     name: "foto.png",
     mimeType: "image/png",
-    buffer: Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aMesAAAAASUVORK5CYII=",
-      "base64",
-    ),
+    buffer: readFileSync(new URL("../fixtures/photo.png", import.meta.url)),
   });
   await page.getByRole("button", { name: "Confirmar", exact: true }).click();
   await expect(

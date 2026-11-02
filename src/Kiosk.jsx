@@ -297,7 +297,8 @@ export default function Kiosk() {
               <Flower2 />
               <p>
                 <strong>Una elección que cuenta.</strong> Puedes votar una sola
-                vez, por una mesa distinta a la tuya. Tu elección es definitiva.
+                vez. Si perteneces a una mesa, elige una distinta a la tuya. Tu
+                elección es definitiva.
               </p>
               <ShieldCheck />
             </div>
@@ -330,7 +331,11 @@ export default function Kiosk() {
                 <span className="avatar">{participant?.name.slice(0, 1)}</span>
                 <span>
                   Hola, <strong>{participant?.name}</strong>
-                  <small>Participas con la mesa {participant?.tableId}</small>
+                  <small>
+                    {participant?.type === "solo_votante"
+                      ? "Solo votante · Puedes elegir cualquiera de las seis mesas"
+                      : `Participas con la mesa ${participant?.tableId}`}
+                  </small>
                 </span>
               </span>
               <div>
@@ -349,8 +354,10 @@ export default function Kiosk() {
                 </span>
                 <h1>¿Cuál es tu ofrenda favorita?</h1>
                 <p>
-                  Elige una de las otras cinco mesas. Tendrás que confirmar tu
-                  elección.
+                  {participant?.type === "solo_votante"
+                    ? "Puedes elegir cualquiera de las seis mesas."
+                    : "Elige una de las otras cinco mesas."}{" "}
+                  Tendrás que confirmar tu elección.
                 </p>
               </div>
               <span className="secret">

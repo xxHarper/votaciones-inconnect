@@ -19,7 +19,11 @@ export function castVote(db, sessionHash, tableId, time = Date.now()) {
       .prepare("SELECT table_id,voted FROM participants WHERE id=?")
       .get(s.participant_id);
     assert(p && !p.voted, 409, "Este participante ya votó.");
-    assert(p.table_id !== tableId, 403, "No puedes votar por tu propia mesa.");
+    assert(
+      p.table_id === null || p.table_id !== tableId,
+      403,
+      "No puedes votar por tu propia mesa.",
+    );
     const changed = db
       .prepare(
         "UPDATE participants SET voted=1,code_hash=NULL WHERE id=? AND voted=0",

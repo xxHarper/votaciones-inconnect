@@ -14,7 +14,7 @@ import { randomBytes } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { configFromEnv } from "../server/config.js";
-import { connect, migrate } from "../server/db.js";
+import { connect, migrate, SCHEMA_VERSION } from "../server/db.js";
 import { passwordHash } from "../server/security.js";
 import { lockDatabase } from "../server/lock.js";
 async function password() {
@@ -103,8 +103,11 @@ try {
       if (check.prepare("PRAGMA foreign_key_check").all().length)
         throw new Error("Referencias inválidas.");
       if (
-        check.prepare("SELECT version FROM schema_migrations").get()
-          ?.version !== 1
+        ![1, SCHEMA_VERSION].includes(
+          check
+            .prepare("SELECT MAX(version) AS version FROM schema_migrations")
+            .get()?.version,
+        )
       )
         throw new Error("Versión de respaldo incompatible.");
       if (check.prepare("SELECT COUNT(*) AS n FROM offerings").get().n !== 6)
@@ -121,6 +124,12 @@ try {
       );
     } finally {
       check.close();
+    }
+    const upgrade = connect(tmp);
+    try {
+      migrate(upgrade);
+    } finally {
+      upgrade.close();
     }
     if (existsSync(c.dbPath)) {
       db = connect(c.dbPath);
@@ -140,9 +149,15 @@ try {
     db = connect(c.dbPath);
     if (command === "backup") {
       if (
-        db.prepare("SELECT version FROM schema_migrations").get()?.version !== 1
+        ![1, SCHEMA_VERSION].includes(
+          db
+            .prepare("SELECT MAX(version) AS version FROM schema_migrations")
+            .get()?.version,
+        )
       )
-        throw new Error("La base no corresponde a OfrendaVote versión 1.");
+        throw new Error(
+          "La base no corresponde a una versión compatible de OfrendaVote.",
+        );
       const target = resolve(
         process.argv[3] || `backups/ofrendavote-${Date.now()}.sqlite`,
       );

@@ -12,27 +12,49 @@ export function connect(path) {
   );
   return db;
 }
+export const SCHEMA_VERSION = 2;
 export function migrate(db) {
-  if (
-    !db
-      .prepare("SELECT name FROM sqlite_master WHERE name='schema_migrations'")
-      .get()
-  ) {
-    db.exec("BEGIN IMMEDIATE");
-    try {
+  const hasSchema = !!db
+    .prepare("SELECT name FROM sqlite_master WHERE name='schema_migrations'")
+    .get();
+  let version = hasSchema
+    ? db.prepare("SELECT MAX(version) AS n FROM schema_migrations").get().n
+    : 0;
+  if (version > SCHEMA_VERSION)
+    throw new Error(
+      "La base requiere una versión más reciente de OfrendaVote.",
+    );
+  if (version === SCHEMA_VERSION) return;
+  if (db.prepare("PRAGMA integrity_check").get().integrity_check !== "ok")
+    throw new Error("No se puede migrar una base con errores de integridad.");
+  // Copia consistente antes de tocar una base existente; incluye WAL y fotos.
+  if (hasSchema && db.prepare("PRAGMA database_list").get().file) {
+    const destination = `${db.prepare("PRAGMA database_list").get().file}.before-migration-v${version}-${Date.now()}.sqlite`;
+    db.prepare("VACUUM INTO ?").run(destination);
+    chmodSync(destination, 0o600);
+  }
+  db.exec("PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE");
+  try {
+    for (let next = version + 1; next <= SCHEMA_VERSION; next++) {
+      const filename =
+        next === 1
+          ? "001_initial.sql"
+          : "002_participant_types_and_galleries.sql";
       db.exec(
         readFileSync(
-          fileURLToPath(
-            new URL("./migrations/001_initial.sql", import.meta.url),
-          ),
+          fileURLToPath(new URL(`./migrations/${filename}`, import.meta.url)),
           "utf8",
         ),
       );
-      db.exec("COMMIT");
-    } catch (e) {
-      db.exec("ROLLBACK");
-      throw e;
     }
+    if (db.prepare("PRAGMA foreign_key_check").all().length)
+      throw new Error("La migración produciría referencias inválidas.");
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  } finally {
+    db.exec("PRAGMA foreign_keys=ON");
   }
 }
 export function atomic(db, fn) {
@@ -60,9 +82,15 @@ export function participation(db) {
       "SELECT o.id, o.name, COUNT(p.id) AS total, COALESCE(SUM(p.voted),0) AS voted, COALESCE(SUM(CASE WHEN p.code_hash IS NOT NULL OR p.voted=1 THEN 1 ELSE 0 END),0) AS enabled FROM offerings o LEFT JOIN participants p ON p.table_id=o.id GROUP BY o.id ORDER BY o.id",
     )
     .all();
+  const solo = db
+    .prepare(
+      "SELECT COUNT(*) AS total,COALESCE(SUM(voted),0) AS voted,COALESCE(SUM(CASE WHEN code_hash IS NOT NULL OR voted=1 THEN 1 ELSE 0 END),0) AS enabled FROM participants WHERE type='solo_votante'",
+    )
+    .get();
   return {
     tables: rows,
-    total: rows.reduce((s, r) => s + r.total, 0),
-    voted: rows.reduce((s, r) => s + r.voted, 0),
+    solo,
+    total: rows.reduce((s, r) => s + r.total, 0) + solo.total,
+    voted: rows.reduce((s, r) => s + r.voted, 0) + solo.voted,
   };
 }

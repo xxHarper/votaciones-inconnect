@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
@@ -389,14 +389,11 @@ test("foto local PNG persistente y rechazo de SVG", async (t) => {
       .field("name", "Ofrenda de Ana")
       .attach("photo", buf, name);
   assert.equal((await upload(Buffer.from("<svg/>"), "bad.svg")).status, 400);
-  const png = Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aMesAAAAASUVORK5CYII=",
-    "base64",
-  );
+  const png = readFileSync(new URL("./fixtures/photo.png", import.meta.url));
   assert.equal((await upload(png, "foto.png")).status, 200);
   const r = await f.api.get("/api/offerings/1/photo");
   assert.equal(r.status, 200);
-  assert.match(r.headers["content-type"], /image\/png/);
+  assert.match(r.headers["content-type"], /image\/webp/);
   assert.equal(
     f.db.prepare("SELECT name FROM offerings WHERE id=1").get().name,
     "Ofrenda de Ana",
