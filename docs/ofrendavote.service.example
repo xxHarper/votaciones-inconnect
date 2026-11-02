@@ -1,0 +1,27 @@
+# Copiar a /etc/systemd/system/ofrendavote.service y adaptar usuario, rutas y Node.
+[Unit]
+Description=OfrendaVote INCONNECT
+After=network.target
+
+[Service]
+Type=simple
+User=ofrendavote
+WorkingDirectory=/opt/ofrendavote
+ExecStart=/usr/bin/node /opt/ofrendavote/server/index.js
+Environment=NODE_ENV=production
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/ofrendavote/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+# sudo systemctl daemon-reload
+# sudo systemctl enable --now ofrendavote
+# sudo systemctl restart ofrendavote
+# Un cierre forzado puede dejar un archivo .lock; consulta README antes de borrarlo.
